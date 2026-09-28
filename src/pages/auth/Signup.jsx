@@ -1,19 +1,15 @@
 // FILE: src/pages/auth/Signup.jsx
 //
-// Phase 1 requirement: Signup + Role selection. Admin is deliberately
-// excluded — Section 8 states admin IDs must not be publicly generated
-// through signup.
+// Admin is deliberately excluded — admin IDs must not be publicly
+// generated through signup.
 //
-// Doctor / Health Worker / Pharmacy-type Facility now type their real
-// registration number, checked against a demo whitelist (see
-// firebase/firestore.js) before the Firebase Auth account is even
-// created — so an invalid reg no never leaves an orphaned Auth user
-// behind.
+// Doctor also picks a Specialization now, shown to patients on the
+// Find Doctor page.
 
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { registerWithEmail } from "../../firebase/auth";
-import { createUserProfile, validateSignupCredential } from "../../firebase/firestore";
+import { createUserProfile, validateSignupCredential, DOCTOR_SPECIALIZATIONS } from "../../firebase/firestore";
 import { useAuth } from "../../services/AuthContext";
 import JourneyPath from "../../components/common/JourneyPath";
 
@@ -21,25 +17,26 @@ const ROLES = [
   { id: "patient", icon: "🧑", name: "Patient", desc: "Track my own care journey" },
   { id: "healthworker", icon: "🩺", name: "ASHA / Health Worker", desc: "Register & follow up patients" },
   { id: "doctor", icon: "⚕️", name: "Doctor", desc: "Consult & create referrals" },
-  { id: "facility", icon: "🏥", name: "Facility", desc: "Manage beds & incoming referrals" },
+  { id: "pharmacy", icon: "💊", name: "Pharmacy", desc: "Manage medicine stock & requests" },
 ];
 
 const ROLE_HOME = {
   patient: "/patient/dashboard",
   healthworker: "/healthworker/dashboard",
   doctor: "/doctor/dashboard",
-  facility: "/facility/dashboard",
+  pharmacy: "/pharmacy/dashboard",
 };
 
 const REG_NO_CONFIG = {
   doctor: { label: "Medical Registration Number", placeholder: "REG-2026-XXXX" },
   healthworker: { label: "ASHA / Health Worker ID", placeholder: "HW-2026-XXXX" },
+  pharmacy: { label: "Drug License Number", placeholder: "PHR-2026-XXXX" },
 };
 
 export default function Signup() {
   const [role, setRole] = useState("patient");
-  const [facilityType, setFacilityType] = useState("hospital");
   const [regNo, setRegNo] = useState("");
+  const [specialization, setSpecialization] = useState(DOCTOR_SPECIALIZATIONS[0]);
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
   const [email, setEmail] = useState("");
@@ -49,22 +46,19 @@ export default function Signup() {
   const navigate = useNavigate();
   const { setFirebaseUser, setProfile } = useAuth();
 
-  // Reset role-specific fields whenever the role card changes, so a
-  // stale reg no from a previous role can never sneak into a new one.
   useEffect(() => {
     setRegNo("");
-    setFacilityType("hospital");
     setError("");
   }, [role]);
 
-  const needsRegNo = role === "doctor" || role === "healthworker" || (role === "facility" && facilityType === "pharmacy");
-  const regNoConfig = REG_NO_CONFIG[role] || { label: "Drug License Number", placeholder: "PHR-2026-XXXX" };
+  const needsRegNo = role === "doctor" || role === "healthworker" || role === "pharmacy";
+  const regNoConfig = REG_NO_CONFIG[role];
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
 
-    const credentialError = validateSignupCredential(role, regNo, facilityType);
+    const credentialError = validateSignupCredential(role, regNo);
     if (credentialError) {
       setError(credentialError);
       return;
@@ -73,7 +67,10 @@ export default function Signup() {
     setSubmitting(true);
     try {
       const cred = await registerWithEmail(email, password);
-      const profile = await createUserProfile({ uid: cred.user.uid, name, email, mobile, role, regNo, facilityType });
+      const profile = await createUserProfile({
+        uid: cred.user.uid, name, email, mobile, role, regNo,
+        specialization: role === "doctor" ? specialization : undefined,
+      });
       setFirebaseUser(cred.user);
       setProfile(profile);
       navigate(ROLE_HOME[role], { replace: true });
@@ -123,28 +120,6 @@ export default function Signup() {
             ))}
           </div>
 
-          {role === "facility" && (
-            <div className="field">
-              <label>Facility type</label>
-              <div className="subtype-toggle">
-                <button
-                  type="button"
-                  className={`subtype-btn${facilityType === "hospital" ? " selected" : ""}`}
-                  onClick={() => setFacilityType("hospital")}
-                >
-                  🏥 Hospital / PHC
-                </button>
-                <button
-                  type="button"
-                  className={`subtype-btn${facilityType === "pharmacy" ? " selected" : ""}`}
-                  onClick={() => setFacilityType("pharmacy")}
-                >
-                  💊 Pharmacy
-                </button>
-              </div>
-            </div>
-          )}
-
           <div className="field">
             <label htmlFor="name">Full name</label>
             <input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
@@ -164,6 +139,17 @@ export default function Signup() {
             <label htmlFor="password">Password</label>
             <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
           </div>
+
+          {role === "doctor" && (
+            <div className="field">
+              <label htmlFor="specialization">Specialization</label>
+              <select id="specialization" value={specialization} onChange={(e) => setSpecialization(e.target.value)}>
+                {DOCTOR_SPECIALIZATIONS.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {needsRegNo && (
             <div className="field">

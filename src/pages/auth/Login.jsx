@@ -1,14 +1,10 @@
 // FILE: src/pages/auth/Login.jsx
 //
-// Role picker mirrors Signup. Two extra role-specific checks run after
-// a successful sign-in:
-//   - doctor / healthworker / pharmacy-type facility: the typed
-//     Registration/License Number must match the stored specialId.
-//   - facility: the picked Hospital/Pharmacy sub-type must match the
-//     account's stored facilityType.
-// If profile.role (or, for facility, profile.facilityType) doesn't
-// match what was picked, we sign the session back out rather than land
-// someone on a dashboard for a role/type they didn't pick.
+// Role picker mirrors Signup. Doctor / Health Worker / Pharmacy must
+// also enter their Registration/License Number, verified against the
+// stored specialId after sign-in. If profile.role doesn't match what
+// was picked, we sign the session back out rather than land someone
+// on a dashboard for a role they didn't pick.
 
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
@@ -21,7 +17,7 @@ const ROLES = [
   { id: "patient", icon: "🧑", name: "Patient", desc: "Track your care journey" },
   { id: "healthworker", icon: "🩺", name: "ASHA / Health Worker", desc: "Register & follow up patients" },
   { id: "doctor", icon: "⚕️", name: "Doctor", desc: "Consult & create referrals" },
-  { id: "facility", icon: "🏥", name: "Facility", desc: "Manage beds & incoming referrals" },
+  { id: "pharmacy", icon: "💊", name: "Pharmacy", desc: "Manage medicine stock & requests" },
   { id: "admin", icon: "🛡️", name: "Admin", desc: "District network oversight" },
 ];
 
@@ -29,7 +25,7 @@ const ROLE_HOME = {
   patient: "/patient/dashboard",
   healthworker: "/healthworker/dashboard",
   doctor: "/doctor/dashboard",
-  facility: "/facility/dashboard",
+  pharmacy: "/pharmacy/dashboard",
   admin: "/admin/command-center",
 };
 
@@ -41,7 +37,6 @@ const REG_NO_CONFIG = {
 
 export default function Login() {
   const [role, setRole] = useState("patient");
-  const [facilityType, setFacilityType] = useState("hospital");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [regNo, setRegNo] = useState("");
@@ -53,14 +48,11 @@ export default function Login() {
   const { setFirebaseUser, setProfile } = useAuth();
   const lookupTimer = useRef(null);
 
-  // Reset role-specific fields whenever the person switches role cards
-  // (or the facility sub-type), so a stale reg no / hint never leaks
-  // across a switch.
   useEffect(() => {
     setRegNo("");
     setPatientIdHint(null);
     setError("");
-  }, [role, facilityType]);
+  }, [role]);
 
   // Debounced Patient ID auto-fetch — only relevant for the patient role.
   useEffect(() => {
@@ -78,8 +70,8 @@ export default function Login() {
     return () => clearTimeout(lookupTimer.current);
   }, [email, role]);
 
-  const needsRegNo = role === "doctor" || role === "healthworker" || (role === "facility" && facilityType === "pharmacy");
-  const regNoConfig = role === "facility" ? REG_NO_CONFIG.pharmacy : (REG_NO_CONFIG[role] || REG_NO_CONFIG.pharmacy);
+  const needsRegNo = role === "doctor" || role === "healthworker" || role === "pharmacy";
+  const regNoConfig = REG_NO_CONFIG[role];
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -101,13 +93,6 @@ export default function Login() {
         await logout();
         const actual = ROLES.find((r) => r.id === profile.role)?.name || profile.role;
         setError(`This account is registered as ${actual}. Please pick the matching role above.`);
-        setSubmitting(false);
-        return;
-      }
-
-      if (role === "facility" && profile.facilityType !== facilityType) {
-        await logout();
-        setError(`This account is registered as a ${profile.facilityType === "pharmacy" ? "Pharmacy" : "Hospital / PHC"}. Please pick the matching type above.`);
         setSubmitting(false);
         return;
       }
@@ -142,9 +127,9 @@ export default function Login() {
         <div>
           <h1 className="story-headline">The patient moves. The information doesn't get lost.</h1>
           <p className="story-sub">
-            One network connecting Sub-Centres, ASHA workers, doctors and district
-            facilities — so a referral travels with the patient's full record,
-            not just their name.
+            One network connecting Sub-Centres, ASHA workers, doctors and
+            pharmacies — so a referral travels with the patient's full
+            record, not just their name.
           </p>
           <JourneyPath />
         </div>
@@ -173,28 +158,6 @@ export default function Login() {
               </button>
             ))}
           </div>
-
-          {role === "facility" && (
-            <div className="field">
-              <label>Facility type</label>
-              <div className="subtype-toggle">
-                <button
-                  type="button"
-                  className={`subtype-btn${facilityType === "hospital" ? " selected" : ""}`}
-                  onClick={() => setFacilityType("hospital")}
-                >
-                  🏥 Hospital / PHC
-                </button>
-                <button
-                  type="button"
-                  className={`subtype-btn${facilityType === "pharmacy" ? " selected" : ""}`}
-                  onClick={() => setFacilityType("pharmacy")}
-                >
-                  💊 Pharmacy
-                </button>
-              </div>
-            </div>
-          )}
 
           <div className="field">
             <label htmlFor="email">Email</label>

@@ -1,16 +1,61 @@
 // FILE: src/pages/doctor/Notifications.jsx
+//
+// Real feature: listens live to open emergency alerts (onSnapshot) —
+// new Patient alerts appear here within a second or two, no refresh
+// needed. Acknowledging marks it handled for everyone watching.
 
+import { useEffect, useState } from "react";
 import DashboardLayout from "../../components/common/DashboardLayout";
-import ComingSoon from "../../components/common/ComingSoon";
+import StatusBadge from "../../components/common/StatusBadge";
+import { acknowledgeAlert, listenToOpenAlerts } from "../../firebase/firestore";
+import { useAuth } from "../../services/AuthContext";
 import { NAV, ROLE_LABEL } from "../../utils/navConfig";
 
 export default function DoctorNotifications() {
+  const { profile } = useAuth();
+  const [alerts, setAlerts] = useState(null);
+
+  useEffect(() => {
+    const unsub = listenToOpenAlerts(setAlerts);
+    return unsub;
+  }, []);
+
+  async function handleAcknowledge(alertId) {
+    await acknowledgeAlert(alertId, profile?.name || "Doctor");
+  }
+
   return (
     <DashboardLayout items={NAV.doctor} roleLabel={ROLE_LABEL.doctor}>
       <div className="page-head">
         <h1>Notifications</h1>
+        <p className="sub">Live emergency alerts from patients.</p>
       </div>
-      <ComingSoon title="Notifications" phase="Phase 5 (Doctor module)" />
+
+      <div className="panel">
+        {alerts === null && <p className="panel-note">Loading…</p>}
+        {alerts?.length === 0 && (
+          <div className="empty-state">
+            <div className="big">No open alerts</div>
+            <p>You'll see emergency alerts here the moment a patient sends one.</p>
+          </div>
+        )}
+        {alerts?.map((a) => (
+          <div key={a.id} className="medicine-result-row">
+            <div>
+              <div className="medicine-result-name">
+                🚨 {a.patientName} <span className="panel-note">({a.patientId})</span>
+              </div>
+              <div className="panel-note">{a.message}</div>
+            </div>
+            <div className="medicine-row-actions">
+              <StatusBadge type="emergency" label="Open" />
+              <button type="button" className="btn-logout" onClick={() => handleAcknowledge(a.id)}>
+                Acknowledge
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </DashboardLayout>
   );
 }

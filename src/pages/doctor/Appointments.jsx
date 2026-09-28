@@ -14,27 +14,53 @@ import { useAuth } from "../../services/AuthContext";
 import { roomNameForPatient, JITSI_DOMAIN } from "../../utils/videoRoom";
 import { NAV, ROLE_LABEL } from "../../utils/navConfig";
 
-const STATUS_BADGE = { waiting: "urgent", "in-progress": "normal", done: "fresh", cancelled: "stale" };
-
 export default function DoctorAppointments() {
   const { profile, firebaseUser } = useAuth();
   const [queue, setQueue] = useState(null);
+  const [error, setError] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const [busyId, setBusyId] = useState(null); // appointment being updated
   const [activeCall, setActiveCall] = useState(null); // appointment currently in a call
 
   useEffect(() => {
     if (!firebaseUser?.uid) return;
-    const unsub = listenToDoctorQueue(firebaseUser.uid, setQueue);
+    const unsub = listenToDoctorQueue(
+      firebaseUser.uid,
+      (list) => {
+        setError(null);
+        setQueue(list);
+      },
+      (err) => setError(err.message || "Couldn't load today's queue.")
+    );
     return unsub;
   }, [firebaseUser]);
 
   async function handleStart(appointment) {
-    await updateAppointmentStatus(appointment.id, "in-progress");
-    setActiveCall(appointment);
+    setActionError(null);
+    setBusyId(appointment.id);
+    try {
+      await updateAppointmentStatus(appointment.id, "in-progress");
+      setActiveCall(appointment);
+    } catch (err) {
+      console.error("handleStart failed:", err);
+      setActionError(err.message || "Couldn't start the consultation. Try again.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function handleFinish(appointment) {
-    await updateAppointmentStatus(appointment.id, "done");
-    setActiveCall(null);
+    setActionError(null);
+    setBusyId(appointment.id);
+    try {
+      await updateAppointmentStatus(appointment.id, "done");
+      setActiveCall(null);
+    } catch (err) {
+      console.error("handleFinish failed:", err);
+      setActionError(err.message || "Couldn't mark this consultation as done. Try again.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   if (activeCall) {
@@ -54,8 +80,15 @@ export default function DoctorAppointments() {
           />
         </div>
 
-        <button className="btn-primary" style={{ width: "auto", marginTop: 16, padding: "12px 26px" }} onClick={() => handleFinish(activeCall)}>
-          Finish &amp; Mark Done
+        {actionError && <p className="panel-note" style={{ marginTop: 12 }}>{actionError}</p>}
+
+        <button
+          className="btn-primary"
+          style={{ width: "auto", marginTop: 16, padding: "12px 26px" }}
+          disabled={busyId === activeCall.id}
+          onClick={() => handleFinish(activeCall)}
+        >
+          {busyId === activeCall.id ? "Saving…" : "Finish & Mark Done"}
         </button>
       </DashboardLayout>
     );
@@ -72,9 +105,16 @@ export default function DoctorAppointments() {
         <p className="sub">Today's queue, in token order.</p>
       </div>
 
+      {actionError && (
+        <div className="panel">
+          <p className="panel-note">{actionError}</p>
+        </div>
+      )}
+
       <div className="panel">
         <h3>Waiting <StatusBadge type="urgent" label={waiting.length} /></h3>
-        {queue === null && <p className="panel-note">Loading…</p>}
+        {error && <p className="panel-note">Couldn't load the queue: {error}</p>}
+        {queue === null && !error && <p className="panel-note">Loading…</p>}
         {queue !== null && waiting.length === 0 && <p className="panel-note">No one waiting right now.</p>}
         {waiting.map((a) => (
           <div key={a.id} className="medicine-result-row">
@@ -82,8 +122,13 @@ export default function DoctorAppointments() {
               <div className="medicine-result-name">Token #{a.tokenNumber} — {a.patientName}</div>
               <div className="panel-note">{a.patientId}</div>
             </div>
-            <button className="btn-primary" style={{ width: "auto", padding: "8px 18px" }} onClick={() => handleStart(a)}>
-              Start Consultation
+            <button
+              className="btn-primary"
+              style={{ width: "auto", padding: "8px 18px" }}
+              disabled={busyId === a.id}
+              onClick={() => handleStart(a)}
+            >
+              {busyId === a.id ? "Starting…" : "Start Consultation"}
             </button>
           </div>
         ))}

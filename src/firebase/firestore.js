@@ -3,10 +3,14 @@
 // Adds: doctor specializations, emergency alerts (real-time), and a
 // queue-based appointment/token system — all client-Firestore only,
 // no backend endpoints needed.
+//
+// STEP 1 additions (bottom of file): request -> accept/reject flow,
+// AI intake storage, My Patients link, consultation notes, and
+// patient report uploads (stored inside Firestore — no Blaze plan needed).
 
 import {
-  addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy,
-  query, runTransaction, serverTimestamp, setDoc, updateDoc, where,
+  addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot,
+  query, runTransaction, serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 import { db } from "./config";
 
@@ -142,6 +146,36 @@ export async function searchMedicineAvailability(medicineName) {
 }
 
 // ============================================================
+// Real-time listener helpers
+// ============================================================
+//
+// NOTE: we deliberately do NOT use orderBy() together with where().
+// That combination needs a Firestore composite index, and without it
+// onSnapshot fails silently (pages stay on "Loading…" forever).
+// Sorting is done in the browser instead — no index needed.
+
+// serverTimestamp is null for a split second on the device that just
+// wrote the doc, so fall back to "now".
+function toMs(ts) {
+  return ts?.toMillis ? ts.toMillis() : Date.now();
+}
+
+function listenAndSort(q, sorter, callback, onError, label) {
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      list.sort(sorter);
+      callback(list);
+    },
+    (err) => {
+      console.error(`${label} failed:`, err);
+      if (onError) onError(err);
+    }
+  );
+}
+
+// ============================================================
 // Emergency Alerts — real-time (Patient -> Doctor/Health Worker)
 // ============================================================
 
@@ -154,20 +188,16 @@ export async function sendEmergencyAlert({ patientUid, patientName, patientId, m
   });
 }
 
-// Real-time — call once, keep the returned unsubscribe function and
-// call it on unmount (see useEffect cleanup in the page components).
-export function listenToOpenAlerts(callback) {
-  const q = query(collection(db, "alerts"), where("status", "==", "open"), orderBy("createdAt", "desc"));
-  return onSnapshot(q, (snap) => {
-    callback(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-  });
+// Call once, keep the returned unsubscribe function and call it on
+// unmount (see useEffect cleanup in the page components).
+export function listenToOpenAlerts(callback, onError) {
+  const q = query(collection(db, "alerts"), where("status", "==", "open"));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToOpenAlerts");
 }
 
-export function listenToPatientAlerts(patientUid, callback) {
-  const q = query(collection(db, "alerts"), where("patientUid", "==", patientUid), orderBy("createdAt", "desc"));
-  return onSnapshot(q, (snap) => {
-    callback(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-  });
+export function listenToPatientAlerts(patientUid, callback, onError) {
+  const q = query(collection(db, "alerts"), where("patientUid", "==", patientUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToPatientAlerts");
 }
 
 export async function acknowledgeAlert(alertId, acknowledgedByName) {
@@ -210,26 +240,320 @@ export async function bookAppointment({ doctorUid, doctorName, patientUid, patie
   return { id: appointmentRef.id, tokenNumber };
 }
 
-export function listenToDoctorQueue(doctorUid, callback) {
+export function listenToDoctorQueue(doctorUid, callback, onError) {
   const date = todayKey();
   const q = query(
     collection(db, "appointments"),
     where("doctorUid", "==", doctorUid),
-    where("date", "==", date),
-    orderBy("tokenNumber", "asc")
+    where("date", "==", date)
   );
-  return onSnapshot(q, (snap) => {
-    callback(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-  });
+  return listenAndSort(q, (a, b) => a.tokenNumber - b.tokenNumber, callback, onError, "listenToDoctorQueue");
 }
 
-export function listenToPatientAppointments(patientUid, callback) {
-  const q = query(collection(db, "appointments"), where("patientUid", "==", patientUid), orderBy("createdAt", "desc"));
-  return onSnapshot(q, (snap) => {
-    callback(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-  });
+export function listenToPatientAppointments(patientUid, callback, onError) {
+  const q = query(collection(db, "appointments"), where("patientUid", "==", patientUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToPatientAppointments");
 }
 
 export async function updateAppointmentStatus(appointmentId, status) {
   await updateDoc(doc(db, "appointments", appointmentId), { status });
+}
+
+// ============================================================
+// STEP 1 — Request -> Accept/Reject flow (token only on accept)
+// ============================================================
+//
+// Appointment status lifecycle:
+//   requested -> waiting (doctor accepted, token assigned)
+//             -> in-progress -> done
+//   requested -> rejected
+//
+// Old pages that only look at "waiting" / "in-progress" / "done"
+// keep working: "requested" and "rejected" appointments simply don't
+// appear in the live queue.
+
+// Patient sends a request. NO token yet. The AI intake (original
+// text + English medical summary) is saved in intakes/{appointmentId}.
+// `intake` shape:
+//   { originalText, language, summary: { chiefComplaint, symptoms[],
+//     duration, severity, redFlags[] }, consent: true }
+export async function requestAppointment({
+  doctorUid, doctorName, patientUid, patientName, patientId, intake,
+}) {
+  const date = todayKey();
+  const appointmentRef = await addDoc(collection(db, "appointments"), {
+    doctorUid, doctorName, patientUid, patientName, patientId,
+    date, status: "requested", tokenNumber: null,
+    hasIntake: !!intake,
+    createdAt: serverTimestamp(),
+  });
+
+  if (intake) {
+    await setDoc(doc(db, "intakes", appointmentRef.id), {
+      appointmentId: appointmentRef.id,
+      doctorUid, patientUid, patientName, patientId,
+      originalText: intake.originalText || "",
+      language: intake.language || "",
+      summary: intake.summary || null,
+      consent: intake.consent === true,
+      createdAt: serverTimestamp(),
+    });
+  }
+  return { id: appointmentRef.id };
+}
+
+// Doctor's Patient Requests page (real-time, oldest first).
+export function listenToDoctorRequests(doctorUid, callback, onError) {
+  const q = query(
+    collection(db, "appointments"),
+    where("doctorUid", "==", doctorUid),
+    where("status", "==", "requested")
+  );
+  return listenAndSort(q, (a, b) => toMs(a.createdAt) - toMs(b.createdAt), callback, onError, "listenToDoctorRequests");
+}
+
+export async function getIntake(appointmentId) {
+  const snap = await getDoc(doc(db, "intakes", appointmentId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+// All intakes of one patient for this doctor (Patient Details page).
+export async function getIntakesForDoctorPatient(doctorUid, patientUid) {
+  const q = query(
+    collection(db, "intakes"),
+    where("doctorUid", "==", doctorUid),
+    where("patientUid", "==", patientUid)
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+  return list;
+}
+
+// Doctor's daily accept-limit (stored on the doctor's own users doc).
+export async function setDoctorDailyLimit(doctorUid, dailyLimit) {
+  await updateDoc(doc(db, "users", doctorUid), { dailyLimit: Number(dailyLimit) });
+}
+
+// Accept = atomically: check daily limit, take next token number,
+// flip status to "waiting", and create the doctor<->patient link
+// (used for My Patients + privacy rules for reports).
+export async function acceptAppointment({
+  appointmentId, doctorUid, patientUid, patientName, patientId, dailyLimit,
+}) {
+  const date = todayKey();
+  const counterRef = doc(db, "tokenCounters", `${doctorUid}_${date}`);
+  const appointmentRef = doc(db, "appointments", appointmentId);
+  const linkRef = doc(db, "doctorPatients", `${doctorUid}_${patientUid}`);
+
+  const tokenNumber = await runTransaction(db, async (tx) => {
+    const apptSnap = await tx.get(appointmentRef);
+    if (!apptSnap.exists()) throw new Error("This request no longer exists.");
+    if (apptSnap.data().status !== "requested") throw new Error("This request was already handled.");
+
+    const counterSnap = await tx.get(counterRef);
+    const current = counterSnap.exists() ? counterSnap.data().count : 0;
+    if (dailyLimit && current >= Number(dailyLimit)) {
+      throw new Error(`Daily limit of ${dailyLimit} patients reached.`);
+    }
+    const next = current + 1;
+
+    tx.set(counterRef, { count: next });
+    tx.update(appointmentRef, { status: "waiting", tokenNumber: next, date, acceptedAt: serverTimestamp() });
+    tx.set(linkRef, {
+      doctorUid, patientUid, patientName, patientId,
+      lastAcceptedAt: serverTimestamp(),
+    }, { merge: true });
+    return next;
+  });
+
+  return { tokenNumber };
+}
+
+export async function rejectAppointment(appointmentId, reason) {
+  await updateDoc(doc(db, "appointments", appointmentId), {
+    status: "rejected",
+    rejectReason: reason || "",
+    rejectedAt: serverTimestamp(),
+  });
+}
+
+// ============================================================
+// STEP 1 — My Patients (doctor <-> patient link docs)
+// ============================================================
+
+export function listenToDoctorPatients(doctorUid, callback, onError) {
+  const q = query(collection(db, "doctorPatients"), where("doctorUid", "==", doctorUid));
+  return listenAndSort(
+    q,
+    (a, b) => toMs(b.lastAcceptedAt) - toMs(a.lastAcceptedAt),
+    callback, onError, "listenToDoctorPatients"
+  );
+}
+
+// All appointments (any date) between one doctor and one patient.
+export async function getDoctorPatientAppointments(doctorUid, patientUid) {
+  const q = query(
+    collection(db, "appointments"),
+    where("doctorUid", "==", doctorUid),
+    where("patientUid", "==", patientUid)
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+  return list;
+}
+
+// ============================================================
+// STEP 1 — Consultation notes (saved when doctor finishes)
+// ============================================================
+
+// One batch: save notes in consultations/{appointmentId} and mark
+// the appointment "done" — both succeed or both fail.
+export async function finishConsultation({
+  appointmentId, doctorUid, doctorName, patientUid, patientName, patientId,
+  tokenNumber, diagnosis, advice, followUpDate,
+}) {
+  const batch = writeBatch(db);
+  batch.set(doc(db, "consultations", appointmentId), {
+    appointmentId, doctorUid, doctorName, patientUid, patientName, patientId,
+    tokenNumber: tokenNumber ?? null,
+    diagnosis: diagnosis || "",
+    advice: advice || "",
+    followUpDate: followUpDate || "",
+    date: todayKey(),
+    createdAt: serverTimestamp(),
+  });
+  batch.update(doc(db, "appointments", appointmentId), { status: "done", finishedAt: serverTimestamp() });
+  await batch.commit();
+}
+
+export function listenToDoctorConsultations(doctorUid, callback, onError) {
+  const q = query(collection(db, "consultations"), where("doctorUid", "==", doctorUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToDoctorConsultations");
+}
+
+export function listenToPatientConsultations(patientUid, callback, onError) {
+  const q = query(collection(db, "consultations"), where("patientUid", "==", patientUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToPatientConsultations");
+}
+
+// One doctor's consultations with one patient (Patient Details page).
+export async function getConsultationsForDoctorPatient(doctorUid, patientUid) {
+  const q = query(
+    collection(db, "consultations"),
+    where("doctorUid", "==", doctorUid),
+    where("patientUid", "==", patientUid)
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+  return list;
+}
+
+// ============================================================
+// STEP 1 — Patient reports (stored in Firestore, no Storage/Blaze)
+// ============================================================
+//
+// Two docs per report:
+//   records/{id}      -> small metadata (title, name, type, size). Lists load fast.
+//   recordFiles/{id}  -> the file itself as a base64 data URL. Fetched only on "View".
+// Firestore doc limit is 1 MiB, so images are compressed in the browser
+// and PDFs are capped at ~650 KB.
+
+const MAX_PDF_BYTES = 650 * 1024;
+const MAX_DATA_URL_CHARS = 950 * 1000; // stays under the 1 MiB doc limit
+const ALLOWED_REPORT_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error("Couldn't read the file."));
+    r.readAsDataURL(file);
+  });
+}
+
+// Shrinks an image until its data URL fits the limit.
+async function compressImage(file) {
+  const srcUrl = await readAsDataUrl(file);
+  const img = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error("Couldn't open this image."));
+    i.src = srcUrl;
+  });
+
+  let maxSide = 1600;
+  let quality = 0.75;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    const out = canvas.toDataURL("image/jpeg", quality);
+    if (out.length <= MAX_DATA_URL_CHARS) return out;
+    maxSide = Math.round(maxSide * 0.8);
+    quality = Math.max(0.5, quality - 0.07);
+  }
+  throw new Error("Image is too large even after compressing. Try a smaller photo.");
+}
+
+export async function uploadPatientReport({ file, patientUid, patientName, patientId, title }) {
+  if (!file) throw new Error("Choose a file first.");
+  if (!ALLOWED_REPORT_TYPES.includes(file.type)) throw new Error("Only PDF, JPG, PNG or WEBP files are allowed.");
+
+  let dataUrl;
+  let fileType = file.type;
+  if (file.type === "application/pdf") {
+    if (file.size > MAX_PDF_BYTES) throw new Error("PDF is too large (max 650 KB). Upload a photo of the report instead, or compress the PDF.");
+    dataUrl = await readAsDataUrl(file);
+  } else {
+    dataUrl = await compressImage(file);
+    fileType = "image/jpeg";
+  }
+  if (dataUrl.length > MAX_DATA_URL_CHARS) throw new Error("File is too large to save.");
+
+  const recordRef = doc(collection(db, "records"));
+  const batch = writeBatch(db);
+  batch.set(recordRef, {
+    patientUid, patientName, patientId,
+    title: (title || "").trim() || file.name,
+    fileName: file.name, fileType, fileSize: file.size,
+    createdAt: serverTimestamp(),
+  });
+  batch.set(doc(db, "recordFiles", recordRef.id), {
+    recordId: recordRef.id, patientUid, dataUrl,
+  });
+  await batch.commit();
+  return { id: recordRef.id };
+}
+
+export function listenToPatientRecords(patientUid, callback, onError) {
+  const q = query(collection(db, "records"), where("patientUid", "==", patientUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToPatientRecords");
+}
+
+// Doctor side — allowed by rules only if a doctorPatients link exists.
+export async function getRecordsForPatient(patientUid) {
+  const q = query(collection(db, "records"), where("patientUid", "==", patientUid));
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+  return list;
+}
+
+// Loads the actual file (data URL) for View / Download.
+export async function getRecordFile(recordId) {
+  const snap = await getDoc(doc(db, "recordFiles", recordId));
+  if (!snap.exists()) throw new Error("File not found.");
+  return snap.data().dataUrl;
+}
+
+export async function deletePatientRecord(recordId) {
+  const batch = writeBatch(db);
+  batch.delete(doc(db, "records", recordId));
+  batch.delete(doc(db, "recordFiles", recordId));
+  await batch.commit();
 }

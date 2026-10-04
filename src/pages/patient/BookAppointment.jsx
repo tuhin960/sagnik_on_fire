@@ -18,6 +18,7 @@ import { useAuth } from "../../services/AuthContext";
 import { NAV, ROLE_LABEL } from "../../utils/navConfig";
 
 const LANGUAGES = [
+  { label: "मराठी (Marathi)", name: "Marathi", speech: "mr-IN" },
   { label: "বাংলা (Bengali)", name: "Bengali", speech: "bn-IN" },
   { label: "हिन्दी (Hindi)", name: "Hindi", speech: "hi-IN" },
   { label: "English", name: "English", speech: "en-IN" },

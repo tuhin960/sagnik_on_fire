@@ -1,10 +1,9 @@
 // FILE: src/pages/patient/Appointments.jsx
 //
-// Real feature: shows every appointment this patient booked, and for
-// today's still-waiting one, listens live to that doctor's queue to
-// show how many patients are still ahead — updates automatically as
-// the doctor moves through tokens (no refresh needed). When the doctor
-// starts the call, a "Join call" button appears.
+// Real feature: shows every appointment this patient requested/booked,
+// and for today's accepted-but-still-waiting one, listens live to that
+// doctor's queue to show how many patients are ahead. Also handles the
+// newer "requested" (waiting on doctor) and "rejected" statuses.
 
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -19,8 +18,8 @@ function todayKey() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-const STATUS_BADGE = { waiting: "urgent", "in-progress": "normal", done: "fresh", cancelled: "stale" };
-const STATUS_LABEL = { waiting: "Waiting", "in-progress": "In Progress", done: "Done", cancelled: "Cancelled" };
+const STATUS_BADGE = { requested: "normal", waiting: "urgent", "in-progress": "normal", done: "fresh", rejected: "stale", cancelled: "stale" };
+const STATUS_LABEL = { requested: "Request sent", waiting: "Waiting", "in-progress": "In Progress", done: "Done", rejected: "Declined", cancelled: "Cancelled" };
 
 export default function PatientAppointments() {
   const { firebaseUser } = useAuth();
@@ -43,10 +42,11 @@ export default function PatientAppointments() {
   }, [firebaseUser]);
 
   const today = todayKey();
+  const requestedToday = appointments?.filter((a) => a.status === "requested") || [];
   const activeToday = appointments?.find((a) => a.date === today && a.status === "waiting");
   const liveToday = appointments?.find((a) => a.date === today && a.status === "in-progress");
 
-  // For today's still-waiting appointment, live-track queue position.
+  // For today's accepted-but-waiting appointment, live-track queue position.
   useEffect(() => {
     if (!activeToday) {
       setAheadCount(null);
@@ -102,6 +102,21 @@ export default function PatientAppointments() {
         </div>
       )}
 
+      {requestedToday.length > 0 && (
+        <div className="panel">
+          <h3>Sent, waiting for doctor</h3>
+          {requestedToday.map((a) => (
+            <div key={a.id} className="medicine-result-row">
+              <div>
+                <div className="medicine-result-name">{a.doctorName}</div>
+                <div className="panel-note">Requested on {a.date}</div>
+              </div>
+              <StatusBadge type="normal" label="Request sent" />
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="panel">
         <h3>All bookings</h3>
         {error && <p className="panel-note">Couldn't load your appointments: {error}</p>}
@@ -116,7 +131,10 @@ export default function PatientAppointments() {
           <div key={a.id} className="medicine-result-row">
             <div>
               <div className="medicine-result-name">{a.doctorName}</div>
-              <div className="panel-note">Token #{a.tokenNumber} · {a.date}</div>
+              <div className="panel-note">{a.tokenNumber ? `Token #${a.tokenNumber} · ` : ""}{a.date}</div>
+              {a.status === "rejected" && a.rejectReason && (
+                <div className="panel-note">Reason: {a.rejectReason}</div>
+              )}
             </div>
             <StatusBadge type={STATUS_BADGE[a.status] || "normal"} label={STATUS_LABEL[a.status] || a.status} />
           </div>

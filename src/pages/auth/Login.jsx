@@ -14,11 +14,10 @@ import { useAuth } from "../../services/AuthContext";
 import JourneyPath from "../../components/common/JourneyPath";
 
 const ROLES = [
-  { id: "patient", icon: "🧑", name: "Patient", desc: "Track your care journey" },
+  { id: "patient", icon: "🧑", name: "Patient", desc: "Manage your health" },
   { id: "healthworker", icon: "🩺", name: "ASHA / Health Worker", desc: "Register & follow up patients" },
   { id: "doctor", icon: "⚕️", name: "Doctor", desc: "Consult & create referrals" },
   { id: "pharmacy", icon: "💊", name: "Pharmacy", desc: "Manage medicine stock & requests" },
-  { id: "admin", icon: "🛡️", name: "Admin", desc: "District network oversight" },
 ];
 
 const ROLE_HOME = {
@@ -30,9 +29,9 @@ const ROLE_HOME = {
 };
 
 const REG_NO_CONFIG = {
-  doctor: { label: "Registration number", placeholder: "REG-2026-XXXX" },
-  healthworker: { label: "Registration number", placeholder: "HW-2026-XXXX" },
-  pharmacy: { label: "Drug license number", placeholder: "PHR-2026-XXXX" },
+  doctor: { label: "Registration number", placeholder: "e.g. REG-2026-1001" },
+  healthworker: { label: "Registration number", placeholder: "e.g. HW-2026-2001" },
+  pharmacy: { label: "Drug license number", placeholder: "e.g. PHR-2026-3001" },
 };
 
 export default function Login() {

@@ -12,6 +12,7 @@
 
 import { NavLink, useNavigate } from "react-router-dom";
 import { logout } from "../../firebase/auth";
+import * as LucideIcons from "lucide-react";
 
 export default function Sidebar({ items, open, roleLabel }) {
   const navigate = useNavigate();
@@ -19,6 +20,13 @@ export default function Sidebar({ items, open, roleLabel }) {
   async function handleLogout() {
     await logout();
     navigate("/login", { replace: true });
+  }
+
+  function renderIcon(iconName) {
+    if (!iconName) return null;
+    const IconComponent = LucideIcons[iconName];
+    if (!IconComponent) return <span>{iconName}</span>;
+    return <IconComponent size={20} />;
   }
 
   return (
@@ -36,7 +44,7 @@ export default function Sidebar({ items, open, roleLabel }) {
               className="nav-item nav-item-logout"
               onClick={handleLogout}
             >
-              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-icon">{renderIcon(item.icon)}</span>
               <span>{item.label}</span>
             </button>
           ) : (
@@ -45,7 +53,7 @@ export default function Sidebar({ items, open, roleLabel }) {
               to={item.to}
               className={({ isActive }) => (isActive ? "active" : "")}
             >
-              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-icon">{renderIcon(item.icon)}</span>
               <span>{item.label}</span>
             </NavLink>
           )

@@ -1,6 +1,6 @@
 // FILE: src/pages/auth/Signup.jsx
 //
-// Admin is deliberately excluded — admin IDs must not be publicly
+// Admin is deliberately excluded â€” admin IDs must not be publicly
 // generated through signup.
 //
 // Doctor also picks a Specialization now, shown to patients on the
@@ -12,12 +12,13 @@ import { registerWithEmail } from "../../firebase/auth";
 import { createUserProfile, validateSignupCredential, DOCTOR_SPECIALIZATIONS } from "../../firebase/firestore";
 import { useAuth } from "../../services/AuthContext";
 import JourneyPath from "../../components/common/JourneyPath";
+import * as LucideIcons from "lucide-react";
 
 const ROLES = [
-  { id: "patient", icon: "🧑", name: "Patient", desc: "Track my own care journey" },
-  { id: "healthworker", icon: "🩺", name: "ASHA / Health Worker", desc: "Register & follow up patients" },
-  { id: "doctor", icon: "⚕️", name: "Doctor", desc: "Consult & create referrals" },
-  { id: "pharmacy", icon: "💊", name: "Pharmacy", desc: "Manage medicine stock & requests" },
+  { id: "patient", icon: "User", name: "Patient", desc: "Manage my health" },
+  { id: "healthworker", icon: "HeartPulse", name: "ASHA / Health Worker", desc: "Register & follow up patients" },
+  { id: "doctor", icon: "Stethoscope", name: "Doctor", desc: "Consult & create referrals" },
+  { id: "pharmacy", icon: "Store", name: "Pharmacy", desc: "Manage medicine stock & requests" },
 ];
 
 const ROLE_HOME = {
@@ -28,9 +29,9 @@ const ROLE_HOME = {
 };
 
 const REG_NO_CONFIG = {
-  doctor: { label: "Medical Registration Number", placeholder: "REG-2026-XXXX" },
-  healthworker: { label: "ASHA / Health Worker ID", placeholder: "HW-2026-XXXX" },
-  pharmacy: { label: "Drug License Number", placeholder: "PHR-2026-XXXX" },
+  doctor: { label: "Medical Registration Number", placeholder: "e.g. REG-2026-1001" },
+  healthworker: { label: "ASHA / Health Worker ID", placeholder: "e.g. HW-2026-2001" },
+  pharmacy: { label: "Drug License Number", placeholder: "e.g. PHR-2026-3001" },
 };
 
 export default function Signup() {
@@ -90,7 +91,7 @@ export default function Signup() {
         <div>
           <h1 className="story-headline">One account. One role. The right dashboard.</h1>
           <p className="story-sub">
-            Pick how you'll use Swasth Setu — your role decides what you can
+            Pick how you'll use Swasth Setu - your role decides what you can
             see and do, nothing more, nothing less.
           </p>
           <JourneyPath />
@@ -106,22 +107,27 @@ export default function Signup() {
           {error && <div className="form-error">{error}</div>}
 
           <div className="role-grid">
-            {ROLES.map((r) => (
-              <button
-                type="button"
-                key={r.id}
-                className={`role-card${role === r.id ? " selected" : ""}`}
-                onClick={() => setRole(r.id)}
-              >
-                <div className="role-icon">{r.icon}</div>
-                <div className="role-name">{r.name}</div>
-                <div className="role-desc">{r.desc}</div>
-              </button>
-            ))}
+            {ROLES.map((r) => {
+              const IconComponent = LucideIcons[r.icon];
+              return (
+                <button
+                  type="button"
+                  key={r.id}
+                  className={`role-card${role === r.id ? " selected" : ""}`}
+                  onClick={() => setRole(r.id)}
+                >
+                  <div className="role-icon">
+                    {IconComponent && <IconComponent size={24} color="var(--teal-600)" />}
+                  </div>
+                  <div className="role-name">{r.name}</div>
+                  <div className="role-desc">{r.desc}</div>
+                </button>
+              );
+            })}
           </div>
 
           <div className="field">
-            <label htmlFor="name">Full name</label>
+            <label htmlFor="name">{role === "pharmacy" ? "Pharmacy Name" : "Full name"}</label>
             <input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
           </div>
 
@@ -166,7 +172,7 @@ export default function Signup() {
           )}
 
           <button className="btn-primary" type="submit" disabled={submitting}>
-            {submitting ? "Creating account…" : `Create ${ROLES.find(r => r.id === role).name} account`}
+            {submitting ? "Creating accountâ€¦" : `Create ${ROLES.find(r => r.id === role).name} account`}
           </button>
 
           <p className="auth-switch">

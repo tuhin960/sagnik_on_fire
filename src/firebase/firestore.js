@@ -1,16 +1,20 @@
 // FILE: src/firebase/firestore.js
 //
 // Adds: doctor specializations, emergency alerts (real-time), and a
-// queue-based appointment/token system — all client-Firestore only,
+// queue-based appointment/token system â€” all client-Firestore only,
 // no backend endpoints needed.
 //
-// STEP 1 additions (bottom of file): request -> accept/reject flow,
-// AI intake storage, My Patients link, consultation notes, and
-// patient report uploads (stored inside Firestore — no Blaze plan needed).
+// STEP 1 additions: request -> accept/reject flow, AI intake storage,
+// My Patients link, consultation notes, and patient report uploads.
+//
+// Health Worker (ASHA) module additions: field patients, assessments,
+// health-worker-booked appointments, referrals.
+//
+// Prescriptions section at the bottom (Doctor -> Patient).
 
 import {
   addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot,
-  query, runTransaction, serverTimestamp, setDoc, updateDoc, where, writeBatch,
+  query, runTransaction, serverTimestamp, Timestamp, setDoc, updateDoc, where, writeBatch, orderBy,
 } from "firebase/firestore";
 import { db } from "./config";
 
@@ -151,8 +155,8 @@ export async function searchMedicineAvailability(medicineName) {
 //
 // NOTE: we deliberately do NOT use orderBy() together with where().
 // That combination needs a Firestore composite index, and without it
-// onSnapshot fails silently (pages stay on "Loading…" forever).
-// Sorting is done in the browser instead — no index needed.
+// onSnapshot fails silently (pages stay on "Loadingâ€¦" forever).
+// Sorting is done in the browser instead â€” no index needed.
 
 // serverTimestamp is null for a split second on the device that just
 // wrote the doc, so fall back to "now".
@@ -176,7 +180,7 @@ function listenAndSort(q, sorter, callback, onError, label) {
 }
 
 // ============================================================
-// Emergency Alerts — real-time (Patient -> Doctor/Health Worker)
+// Emergency Alerts â€” real-time (Patient -> Doctor/Health Worker)
 // ============================================================
 
 export async function sendEmergencyAlert({ patientUid, patientName, patientId, message }) {
@@ -217,7 +221,7 @@ function todayKey() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-// Atomic — uses a Firestore transaction, so two patients booking the
+// Atomic â€” uses a Firestore transaction, so two patients booking the
 // exact same doctor at the exact same moment can never receive the
 // same token number.
 export async function bookAppointment({ doctorUid, doctorName, patientUid, patientName, patientId }) {
@@ -260,7 +264,7 @@ export async function updateAppointmentStatus(appointmentId, status) {
 }
 
 // ============================================================
-// STEP 1 — Request -> Accept/Reject flow (token only on accept)
+// STEP 1 â€” Request -> Accept/Reject flow (token only on accept)
 // ============================================================
 //
 // Appointment status lifecycle:
@@ -338,13 +342,17 @@ export async function setDoctorDailyLimit(doctorUid, dailyLimit) {
 // Accept = atomically: check daily limit, take next token number,
 // flip status to "waiting", and create the doctor<->patient link
 // (used for My Patients + privacy rules for reports).
+//
+// NOTE: Health-Worker-booked requests have patientUid = null (the field
+// patient has no login). For those we skip the doctorPatients link so we
+// don't create a junk "<doctorUid>_null" document.
 export async function acceptAppointment({
   appointmentId, doctorUid, patientUid, patientName, patientId, dailyLimit,
 }) {
   const date = todayKey();
   const counterRef = doc(db, "tokenCounters", `${doctorUid}_${date}`);
   const appointmentRef = doc(db, "appointments", appointmentId);
-  const linkRef = doc(db, "doctorPatients", `${doctorUid}_${patientUid}`);
+  const linkRef = patientUid ? doc(db, "doctorPatients", `${doctorUid}_${patientUid}`) : null;
 
   const tokenNumber = await runTransaction(db, async (tx) => {
     const apptSnap = await tx.get(appointmentRef);
@@ -360,10 +368,12 @@ export async function acceptAppointment({
 
     tx.set(counterRef, { count: next });
     tx.update(appointmentRef, { status: "waiting", tokenNumber: next, date, acceptedAt: serverTimestamp() });
-    tx.set(linkRef, {
-      doctorUid, patientUid, patientName, patientId,
-      lastAcceptedAt: serverTimestamp(),
-    }, { merge: true });
+    if (linkRef) {
+      tx.set(linkRef, {
+        doctorUid, patientUid, patientName, patientId,
+        lastAcceptedAt: serverTimestamp(),
+      }, { merge: true });
+    }
     return next;
   });
 
@@ -379,7 +389,7 @@ export async function rejectAppointment(appointmentId, reason) {
 }
 
 // ============================================================
-// STEP 1 — My Patients (doctor <-> patient link docs)
+// STEP 1 â€” My Patients (doctor <-> patient link docs)
 // ============================================================
 
 export function listenToDoctorPatients(doctorUid, callback, onError) {
@@ -405,11 +415,11 @@ export async function getDoctorPatientAppointments(doctorUid, patientUid) {
 }
 
 // ============================================================
-// STEP 1 — Consultation notes (saved when doctor finishes)
+// STEP 1 â€” Consultation notes (saved when doctor finishes)
 // ============================================================
 
 // One batch: save notes in consultations/{appointmentId} and mark
-// the appointment "done" — both succeed or both fail.
+// the appointment "done" â€” both succeed or both fail.
 export async function finishConsultation({
   appointmentId, doctorUid, doctorName, patientUid, patientName, patientId,
   tokenNumber, diagnosis, advice, followUpDate,
@@ -452,7 +462,7 @@ export async function getConsultationsForDoctorPatient(doctorUid, patientUid) {
 }
 
 // ============================================================
-// STEP 1 — Patient reports (stored in Firestore, no Storage/Blaze)
+// STEP 1 â€” Patient reports (stored in Firestore, no Storage/Blaze)
 // ============================================================
 //
 // Two docs per report:
@@ -535,7 +545,7 @@ export function listenToPatientRecords(patientUid, callback, onError) {
   return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToPatientRecords");
 }
 
-// Doctor side — allowed by rules only if a doctorPatients link exists.
+// Doctor side â€” allowed by rules only if a doctorPatients link exists.
 export async function getRecordsForPatient(patientUid) {
   const q = query(collection(db, "records"), where("patientUid", "==", patientUid));
   const snap = await getDocs(q);
@@ -556,4 +566,237 @@ export async function deletePatientRecord(recordId) {
   batch.delete(doc(db, "records", recordId));
   batch.delete(doc(db, "recordFiles", recordId));
   await batch.commit();
+}
+
+// ============================================================
+// Health Worker (ASHA) module
+// ============================================================
+//
+// Field patients are people an ASHA worker registers in person and who
+// may have no phone/app of their own â€” so they live in their own
+// collection (fieldPatients), separate from users (self-signup only).
+
+export async function registerFieldPatient({
+  name, age, gender, village, contactNumber, healthworkerUid, healthworkerName,
+}) {
+  const shortId = Math.floor(1000 + Math.random() * 9000);
+  const shortId2 = Math.floor(1000 + Math.random() * 9000);
+  const patientId = "PAT-" + shortId + "-" + shortId2;
+  const ref = await addDoc(collection(db, "fieldPatients"), {
+    patientId,
+    name, age: age ? Number(age) : null, gender: gender || "", village: village || "",
+    contactNumber: contactNumber || "",
+    registeredByUid: healthworkerUid, registeredByName: healthworkerName,
+    createdAt: serverTimestamp(),
+  });
+  return { id: ref.id, patientId };
+}
+
+export function listenToHealthworkerPatients(healthworkerUid, callback, onError) {
+  const q = query(collection(db, "fieldPatients"), where("registeredByUid", "==", healthworkerUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToHealthworkerPatients");
+}
+
+// --- Health assessment (vitals/symptoms). riskLevel is computed by the
+// page itself from simple threshold rules â€” this just stores the result.
+export async function saveAssessment({
+  fieldPatientId, fieldPatientName, healthworkerUid, healthworkerName,
+  vitals, symptoms, notes, riskLevel, followUpDate,
+}) {
+  const ref = await addDoc(collection(db, "assessments"), {
+    fieldPatientId, fieldPatientName, healthworkerUid, healthworkerName,
+    vitals: vitals || {}, symptoms: symptoms || [], notes: notes || "",
+    riskLevel: riskLevel || "low", followUpDate: followUpDate || "",
+    createdAt: serverTimestamp(),
+  });
+  return { id: ref.id };
+}
+
+export function listenToHealthworkerAssessments(healthworkerUid, callback, onError) {
+  const q = query(collection(db, "assessments"), where("healthworkerUid", "==", healthworkerUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToHealthworkerAssessments");
+}
+
+export async function getAssessmentsForFieldPatient(fieldPatientId) {
+  const q = query(collection(db, "assessments"), where("fieldPatientId", "==", fieldPatientId));
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+  return list;
+}
+
+// --- Health Worker books a consultation on behalf of a field patient.
+// No AI intake here (the worker can write directly); token is assigned
+// on doctor accept, same as the patient-initiated flow.
+export async function requestAppointmentForFieldPatient({
+  doctorUid, doctorName, fieldPatientId, fieldPatientName,
+  healthworkerUid, healthworkerName, note,
+}) {
+  const date = todayKey();
+  const ref = await addDoc(collection(db, "appointments"), {
+    doctorUid, doctorName,
+    patientUid: null, patientName: fieldPatientName, patientId: fieldPatientId,
+    bookedByUid: healthworkerUid, bookedByName: healthworkerName,
+    date, status: "requested", tokenNumber: null,
+    hasIntake: false, note: note || "",
+    createdAt: serverTimestamp(),
+  });
+  return { id: ref.id };
+}
+
+export function listenToHealthworkerBookings(healthworkerUid, callback, onError) {
+  const q = query(collection(db, "appointments"), where("bookedByUid", "==", healthworkerUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToHealthworkerBookings");
+}
+
+// ============================================================
+// Referrals (Health Worker or Doctor -> a hospital/facility)
+// ============================================================
+//
+// urgency: "normal" | "urgent" | "emergency"
+// patientUid: set when the referred patient has an account (doctor
+// referrals) so the patient can see it; null for ASHA field patients.
+export async function createReferral({
+  referredByUid, referredByName, referredByRole,
+  patientRefType, patientRefId, patientName, patientId, patientUid,
+  toFacility, reason, urgency,
+}) {
+  const ref = await addDoc(collection(db, "referrals"), {
+    referredByUid, referredByName, referredByRole,
+    patientRefType, patientRefId, patientName, patientId,
+    patientUid: patientUid || null,
+    toFacility, reason: reason || "",
+    urgency: urgency || "normal",
+    status: "sent",
+    createdAt: serverTimestamp(),
+  });
+  return { id: ref.id };
+}
+
+// Referrals sent by this Health Worker / Doctor.
+export function listenToReferralsByUser(uid, callback, onError) {
+  const q = query(collection(db, "referrals"), where("referredByUid", "==", uid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToReferralsByUser");
+}
+
+// Referrals made FOR this patient (patient's Referrals page).
+export function listenToPatientReferrals(patientUid, callback, onError) {
+  const q = query(collection(db, "referrals"), where("patientUid", "==", patientUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToPatientReferrals");
+}
+
+// ============================================================
+// Prescriptions (Doctor -> Patient)
+// ============================================================
+//
+// medicines: [{ name, dosage, frequency, duration, instructions }]
+// Immutable once created (a new prescription is written for changes).
+// Rules only allow a doctor to prescribe to a patient they have
+// accepted (doctorPatients link).
+export async function createPrescription({
+  doctorUid, doctorName, patientUid, patientName, patientId,
+  medicines, notes, appointmentId,
+}) {
+  const cleaned = (medicines || [])
+    .map((m) => ({
+      name: (m.name || "").trim(),
+      dosage: (m.dosage || "").trim(),
+      frequency: (m.frequency || "").trim(),
+      duration: (m.duration || "").trim(),
+      instructions: (m.instructions || "").trim(),
+    }))
+    .filter((m) => m.name);
+  if (cleaned.length === 0) throw new Error("Add at least one medicine.");
+
+  const ref = await addDoc(collection(db, "prescriptions"), {
+    doctorUid, doctorName, patientUid, patientName, patientId: patientId || "",
+    medicines: cleaned,
+    notes: (notes || "").trim(),
+    appointmentId: appointmentId || null,
+    date: todayKey(),
+    createdAt: serverTimestamp(),
+  });
+  return { id: ref.id };
+}
+
+export function listenToDoctorPrescriptions(doctorUid, callback, onError) {
+  const q = query(collection(db, "prescriptions"), where("doctorUid", "==", doctorUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToDoctorPrescriptions");
+}
+
+export function listenToPatientPrescriptions(patientUid, callback, onError) {
+  const q = query(collection(db, "prescriptions"), where("patientUid", "==", patientUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), callback, onError, "listenToPatientPrescriptions");
+}
+
+export async function updateUserProfile(uid, data) {
+  await updateDoc(doc(db, 'users', uid), data);
+  return await getUserProfile(uid);
+}
+
+export async function generateConsultationCode(appointmentId, patientUid, doctorName, scheduledTimeStr) {
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const now = new Date();
+  const [hours, minutes] = scheduledTimeStr.split(":");
+  const scheduledTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(hours), parseInt(minutes));
+  const expiresAt = new Date(scheduledTime.getTime() + 3 * 60000);
+  
+  await updateDoc(doc(db, "appointments", appointmentId), {
+    joinCode: code,
+    scheduledTime: Timestamp.fromDate(scheduledTime),
+    joinCodeExpiresAt: Timestamp.fromDate(expiresAt),
+    status: "in-progress"
+  });
+
+  await addDoc(collection(db, "notifications"), {
+    userId: patientUid,
+    title: "Consultation Scheduled",
+    body: `Dr. ${doctorName} has scheduled your consultation at ${scheduledTimeStr}. Join code: ${code}`,
+    createdAt: serverTimestamp(),
+    read: false
+  });
+  
+  return code;
+}
+
+export async function destroyConsultation(appointmentId) {
+  await updateDoc(doc(db, "appointments", appointmentId), {
+    status: "destroyed",
+    joinCode: null
+  });
+}
+
+
+// --- PHARMACY REQUESTS (PRESCRIPTION CHECK) ---
+export async function getPharmacies() {
+  const q = query(collection(db, "users"), where("role", "==", "pharmacy"));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function sendPrescriptionToPharmacy(patientUid, patientName, prescriptionData, pharmacyUid, pharmacyName) {
+  await addDoc(collection(db, "pharmacyRequests"), {
+    patientUid, patientName,
+    pharmacyUid, pharmacyName,
+    prescriptionData,
+    status: "pending", // pending, responded
+    medicinesStatus: {}, // e.g. { "Paracetamol": "available", "Amoxil": "unavailable" }
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export function listenToPharmacyRequests(pharmacyUid, onData, onError) {
+  const q = query(collection(db, "pharmacyRequests"), where("pharmacyUid", "==", pharmacyUid), orderBy("createdAt", "desc"));
+  return onSnapshot(q, (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+}
+
+export function listenToPatientPharmacyRequests(patientUid, onData, onError) {
+  const q = query(collection(db, "pharmacyRequests"), where("patientUid", "==", patientUid), orderBy("createdAt", "desc"));
+  return onSnapshot(q, (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+}
+
+export async function updatePharmacyRequest(requestId, updates) {
+  updates.updatedAt = serverTimestamp();
+  await setDoc(doc(db, "pharmacyRequests", requestId), updates, { merge: true });
 }

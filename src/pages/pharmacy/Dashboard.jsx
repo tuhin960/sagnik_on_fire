@@ -1,9 +1,6 @@
-// FILE: src/pages/pharmacy/Dashboard.jsx
-
 import { useEffect, useState } from "react";
 import DashboardLayout from "../../components/common/DashboardLayout";
 import StatCard from "../../components/common/StatCard";
-import StatusBadge from "../../components/common/StatusBadge";
 import { getPharmacyStock } from "../../firebase/firestore";
 import { useAuth } from "../../services/AuthContext";
 import { NAV, ROLE_LABEL } from "../../utils/navConfig";
@@ -30,14 +27,9 @@ export default function PharmacyDashboard() {
 
       <div className="stat-grid">
         <StatCard icon="💊" label="Medicines Listed" value={stock.length} />
-        <StatCard icon="⚠️" label="Low Stock (&lt;10 units)" value={lowStockCount} tint="var(--amber-100)" />
-        <StatCard icon="🚫" label="Out of Stock" value={outOfStockCount} tint="var(--red-100)" />
-        <StatCard icon="📨" label="Pending Requests" value="0" meta="Demo data" />
-      </div>
-
-      <div className="panel">
-        <h3>Your license <StatusBadge type="demo" /></h3>
-        <p className="panel-note">{profile?.specialId || "—"}</p>
+        <StatCard icon="⚠️" label="Low Stock (<10 units)" value={lowStockCount} tint="var(--amber-100)" />
+        <StatCard icon="🚨" label="Out of Stock" value={outOfStockCount} tint="var(--red-100)" />
+        <StatCard icon="📜" label="License No." value={profile?.regNo || profile?.specialId || "N/A"} meta="Verified" />
       </div>
     </DashboardLayout>
   );

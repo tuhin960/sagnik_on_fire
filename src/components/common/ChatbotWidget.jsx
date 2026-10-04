@@ -31,6 +31,7 @@ export default function ChatbotWidget() {
       const reply = await askChatbot(firebaseUser, text, messages);
       setMessages((m) => [...m, { role: "assistant", text: reply }]);
     } catch (err) {
+      console.error("Chatbot error:", err);
       setMessages((m) => [...m, { role: "assistant", text: "Sorry, something went wrong. Please try again." }]);
     } finally {
       setSending(false);

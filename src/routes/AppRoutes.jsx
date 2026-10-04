@@ -14,12 +14,10 @@ import Signup from "../pages/auth/Signup";
 
 // Patient
 import PatientDashboard from "../pages/patient/Dashboard";
-import PatientProfile from "../pages/patient/Profile";
 import PatientFindDoctor from "../pages/patient/FindDoctor";
 import PatientBookAppointment from "../pages/patient/BookAppointment";
 import PatientAppointments from "../pages/patient/Appointments";
 import PatientOnlineConsultation from "../pages/patient/OnlineConsultation";
-import PatientCareJourney from "../pages/patient/CareJourney";
 import PatientPrescriptions from "../pages/patient/Prescriptions";
 import PatientMedicines from "../pages/patient/Medicines";
 import PatientHealthRecord from "../pages/patient/HealthRecord";
@@ -46,14 +44,12 @@ import HealthWorkerNotifications from "../pages/healthworker/Notifications";
 
 // Doctor
 import DoctorDashboard from "../pages/doctor/Dashboard";
-import DoctorProfile from "../pages/doctor/Profile";
 import DoctorPatientRequests from "../pages/doctor/PatientRequests";
 import DoctorAppointments from "../pages/doctor/Appointments";
 import DoctorMyPatients from "../pages/doctor/MyPatients";
 import DoctorPatientDetails from "../pages/doctor/PatientDetails";
 import DoctorConsultations from "../pages/doctor/Consultations";
 import DoctorPrescriptions from "../pages/doctor/Prescriptions";
-import DoctorPatientRecords from "../pages/doctor/PatientRecords";
 import DoctorReferPatient from "../pages/doctor/ReferPatient";
 import DoctorFollowUps from "../pages/doctor/FollowUps";
 import DoctorNotifications from "../pages/doctor/Notifications";
@@ -95,12 +91,10 @@ export default function AppRoutes() {
 
       {/* Patient */}
       <Route path="/patient/dashboard" element={guarded("patient", <PatientDashboard />)} />
-      <Route path="/patient/profile" element={guarded("patient", <PatientProfile />)} />
       <Route path="/patient/find-doctor" element={guarded("patient", <PatientFindDoctor />)} />
       <Route path="/patient/book-appointment" element={guarded("patient", <PatientBookAppointment />)} />
       <Route path="/patient/appointments" element={guarded("patient", <PatientAppointments />)} />
       <Route path="/patient/online-consultation" element={guarded("patient", <PatientOnlineConsultation />)} />
-      <Route path="/patient/care-journey" element={guarded("patient", <PatientCareJourney />)} />
       <Route path="/patient/prescriptions" element={guarded("patient", <PatientPrescriptions />)} />
       <Route path="/patient/medicines" element={guarded("patient", <PatientMedicines />)} />
       <Route path="/patient/health-record" element={guarded("patient", <PatientHealthRecord />)} />
@@ -127,14 +121,12 @@ export default function AppRoutes() {
 
       {/* Doctor */}
       <Route path="/doctor/dashboard" element={guarded("doctor", <DoctorDashboard />)} />
-      <Route path="/doctor/profile" element={guarded("doctor", <DoctorProfile />)} />
       <Route path="/doctor/patient-requests" element={guarded("doctor", <DoctorPatientRequests />)} />
       <Route path="/doctor/appointments" element={guarded("doctor", <DoctorAppointments />)} />
       <Route path="/doctor/my-patients" element={guarded("doctor", <DoctorMyPatients />)} />
       <Route path="/doctor/patient-details" element={guarded("doctor", <DoctorPatientDetails />)} />
       <Route path="/doctor/consultations" element={guarded("doctor", <DoctorConsultations />)} />
       <Route path="/doctor/prescriptions" element={guarded("doctor", <DoctorPrescriptions />)} />
-      <Route path="/doctor/patient-records" element={guarded("doctor", <DoctorPatientRecords />)} />
       <Route path="/doctor/refer-patient" element={guarded("doctor", <DoctorReferPatient />)} />
       <Route path="/doctor/follow-ups" element={guarded("doctor", <DoctorFollowUps />)} />
       <Route path="/doctor/notifications" element={guarded("doctor", <DoctorNotifications />)} />

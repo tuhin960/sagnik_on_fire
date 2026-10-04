@@ -4,15 +4,23 @@
 // a consultation opens the exact same Jitsi room the patient sees on
 // their Online Consultation page (same deterministic room name, derived
 // from the patient's own Patient ID) — no separate call-link sharing
-// needed.
+// needed. Finishing a call now records diagnosis/advice/follow-up notes
+// (finishConsultation) instead of just flipping the status.
 
 import { useEffect, useState } from "react";
 import DashboardLayout from "../../components/common/DashboardLayout";
 import StatusBadge from "../../components/common/StatusBadge";
-import { listenToDoctorQueue, updateAppointmentStatus } from "../../firebase/firestore";
+import { listenToDoctorQueue, finishConsultation, generateConsultationCode } from "../../firebase/firestore";
 import { useAuth } from "../../services/AuthContext";
 import { roomNameForPatient, JITSI_DOMAIN } from "../../utils/videoRoom";
 import { NAV, ROLE_LABEL } from "../../utils/navConfig";
+import { updateAppointmentStatus } from "../../firebase/firestore";
+
+const textareaStyle = {
+  width: "100%", minHeight: 80, padding: "10px 12px", fontSize: 14, lineHeight: 1.5,
+  border: "1px solid var(--line)", borderRadius: 8, fontFamily: "inherit", resize: "vertical",
+  boxSizing: "border-box",
+};
 
 export default function DoctorAppointments() {
   const { profile, firebaseUser } = useAuth();
@@ -21,6 +29,9 @@ export default function DoctorAppointments() {
   const [actionError, setActionError] = useState(null);
   const [busyId, setBusyId] = useState(null); // appointment being updated
   const [activeCall, setActiveCall] = useState(null); // appointment currently in a call
+  const [finishing, setFinishing] = useState(false); // notes-form open
+  const [notes, setNotes] = useState({ diagnosis: "", advice: "", followUpDate: "" });
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!firebaseUser?.uid) return;
@@ -35,32 +46,98 @@ export default function DoctorAppointments() {
     return unsub;
   }, [firebaseUser]);
 
-  async function handleStart(appointment) {
+  const [scheduleTime, setScheduleTime] = useState({});
+  const [generatedCodes, setGeneratedCodes] = useState({});
+
+  async function handleSchedule(appointment) {
+    if (!scheduleTime[appointment.id]) {
+      setActionError("Please select a time first.");
+      return;
+    }
     setActionError(null);
     setBusyId(appointment.id);
     try {
-      await updateAppointmentStatus(appointment.id, "in-progress");
-      setActiveCall(appointment);
+      const code = await generateConsultationCode(
+        appointment.id, 
+        appointment.patientUid, 
+        profile?.name || "Doctor", 
+        scheduleTime[appointment.id]
+      );
+      setGeneratedCodes(prev => ({ ...prev, [appointment.id]: code }));
     } catch (err) {
-      console.error("handleStart failed:", err);
-      setActionError(err.message || "Couldn't start the consultation. Try again.");
+      console.error("handleSchedule failed:", err);
+      setActionError(err.message || "Couldn't generate join code. Try again.");
     } finally {
       setBusyId(null);
     }
   }
 
-  async function handleFinish(appointment) {
+  function handleRejoin(appointment) {
+    setActiveCall(appointment);
+  }
+
+  async function handleSaveAndFinish() {
     setActionError(null);
-    setBusyId(appointment.id);
+    setSaving(true);
     try {
-      await updateAppointmentStatus(appointment.id, "done");
+      await finishConsultation({
+        appointmentId: activeCall.id,
+        doctorUid: firebaseUser.uid,
+        doctorName: profile?.name || "Doctor",
+        patientUid: activeCall.patientUid,
+        patientName: activeCall.patientName,
+        patientId: activeCall.patientId,
+        tokenNumber: activeCall.tokenNumber,
+        diagnosis: notes.diagnosis.trim(),
+        advice: notes.advice.trim(),
+        followUpDate: notes.followUpDate,
+      });
       setActiveCall(null);
+      setFinishing(false);
+      setNotes({ diagnosis: "", advice: "", followUpDate: "" });
     } catch (err) {
-      console.error("handleFinish failed:", err);
-      setActionError(err.message || "Couldn't mark this consultation as done. Try again.");
+      console.error("finishConsultation failed:", err);
+      setActionError(err.message || "Couldn't save the consultation notes. Try again.");
     } finally {
-      setBusyId(null);
+      setSaving(false);
     }
+  }
+
+  if (activeCall && finishing) {
+    return (
+      <DashboardLayout items={NAV.doctor} roleLabel={ROLE_LABEL.doctor}>
+        <div className="page-head">
+          <h1>Consultation notes — Token #{activeCall.tokenNumber}</h1>
+          <p className="sub">{activeCall.patientName} ({activeCall.patientId})</p>
+        </div>
+
+        <div className="panel">
+          <div className="field">
+            <label>Diagnosis / impression</label>
+            <textarea style={textareaStyle} value={notes.diagnosis} onChange={(e) => setNotes((n) => ({ ...n, diagnosis: e.target.value }))} placeholder="e.g. Acute gastritis" />
+          </div>
+          <div className="field">
+            <label>Advice for the patient</label>
+            <textarea style={textareaStyle} value={notes.advice} onChange={(e) => setNotes((n) => ({ ...n, advice: e.target.value }))} placeholder="Medicines, rest, diet, warning signs to watch for…" />
+          </div>
+          <div className="field">
+            <label>Follow-up date (optional)</label>
+            <input type="date" value={notes.followUpDate} onChange={(e) => setNotes((n) => ({ ...n, followUpDate: e.target.value }))} />
+          </div>
+
+          {actionError && <p className="form-error">{actionError}</p>}
+
+          <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+            <button className="btn-primary" style={{ width: "auto", padding: "12px 26px" }} disabled={saving} onClick={handleSaveAndFinish}>
+              {saving ? "Saving…" : "Save & Mark Done"}
+            </button>
+            <button className="btn-logout" style={{ padding: "12px 20px" }} disabled={saving} onClick={() => setFinishing(false)}>
+              Back to call
+            </button>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
   }
 
   if (activeCall) {
@@ -85,24 +162,26 @@ export default function DoctorAppointments() {
         <button
           className="btn-primary"
           style={{ width: "auto", marginTop: 16, padding: "12px 26px" }}
-          disabled={busyId === activeCall.id}
-          onClick={() => handleFinish(activeCall)}
+          onClick={() => setFinishing(true)}
         >
-          {busyId === activeCall.id ? "Saving…" : "Finish & Mark Done"}
+          Finish & Add Notes
         </button>
       </DashboardLayout>
     );
   }
 
-  const waiting = queue?.filter((a) => a.status === "waiting") || [];
-  const inProgress = queue?.filter((a) => a.status === "in-progress") || [];
-  const done = queue?.filter((a) => a.status === "done") || [];
+  // "requested" appointments also carry today's date, so listenToDoctorQueue
+  // can include them — they belong on Patient Requests, not here.
+  const today = queue?.filter((a) => a.status !== "requested") || [];
+  const waiting = today.filter((a) => a.status === "waiting");
+  const inProgress = today.filter((a) => a.status === "in-progress");
+  const done = today.filter((a) => a.status === "done");
 
   return (
     <DashboardLayout items={NAV.doctor} roleLabel={ROLE_LABEL.doctor}>
       <div className="page-head">
         <h1>Appointments</h1>
-        <p className="sub">Today's queue, in token order.</p>
+        <p className="sub">Schedule waiting patients and generate join codes.</p>
       </div>
 
       {actionError && (
@@ -122,33 +201,33 @@ export default function DoctorAppointments() {
               <div className="medicine-result-name">Token #{a.tokenNumber} — {a.patientName}</div>
               <div className="panel-note">{a.patientId}</div>
             </div>
-            <button
-              className="btn-primary"
-              style={{ width: "auto", padding: "8px 18px" }}
-              disabled={busyId === a.id}
-              onClick={() => handleStart(a)}
-            >
-              {busyId === a.id ? "Starting…" : "Start Consultation"}
-            </button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {generatedCodes[a.id] ? (
+                <div style={{ color: "var(--teal-700)", fontWeight: "bold" }}>
+                  Code: {generatedCodes[a.id]}
+                </div>
+              ) : (
+                <>
+                  <input 
+                    type="time" 
+                    value={scheduleTime[a.id] || ""} 
+                    onChange={e => setScheduleTime(prev => ({ ...prev, [a.id]: e.target.value }))}
+                    style={{ padding: "6px", borderRadius: 4, border: "1px solid var(--line)" }}
+                  />
+                  <button
+                    className="btn-primary"
+                    style={{ width: "auto", padding: "8px 18px" }}
+                    disabled={busyId === a.id}
+                    onClick={() => handleSchedule(a)}
+                  >
+                    {busyId === a.id ? "Generating..." : "Generate Join Code"}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         ))}
       </div>
-
-      {inProgress.length > 0 && (
-        <div className="panel">
-          <h3>In Progress</h3>
-          {inProgress.map((a) => (
-            <div key={a.id} className="medicine-result-row">
-              <div>
-                <div className="medicine-result-name">Token #{a.tokenNumber} — {a.patientName}</div>
-              </div>
-              <button className="btn-primary" style={{ width: "auto", padding: "8px 18px" }} onClick={() => setActiveCall(a)}>
-                Rejoin Call
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
 
       {done.length > 0 && (
         <div className="panel">

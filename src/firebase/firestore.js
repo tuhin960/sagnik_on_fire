@@ -286,7 +286,9 @@ export async function requestAppointment({
 }) {
   const date = todayKey();
   const appointmentRef = await addDoc(collection(db, "appointments"), {
-    doctorUid, doctorName, patientUid, patientName, patientId,
+    doctorUid, doctorName, patientUid, 
+    patientName: patientName || "Unknown", 
+    patientId: patientId || "N/A",
     date, status: "requested", tokenNumber: null,
     hasIntake: !!intake,
     createdAt: serverTimestamp(),
@@ -295,7 +297,9 @@ export async function requestAppointment({
   if (intake) {
     await setDoc(doc(db, "intakes", appointmentRef.id), {
       appointmentId: appointmentRef.id,
-      doctorUid, patientUid, patientName, patientId,
+      doctorUid, patientUid, 
+      patientName: patientName || "Unknown", 
+      patientId: patientId || "N/A",
       originalText: intake.originalText || "",
       language: intake.language || "",
       summary: intake.summary || null,

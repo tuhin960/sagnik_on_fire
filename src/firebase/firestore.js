@@ -791,13 +791,13 @@ export async function sendPrescriptionToPharmacy(patientUid, patientName, prescr
 }
 
 export function listenToPharmacyRequests(pharmacyUid, onData, onError) {
-  const q = query(collection(db, "pharmacyRequests"), where("pharmacyUid", "==", pharmacyUid), orderBy("createdAt", "desc"));
-  return onSnapshot(q, (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+  const q = query(collection(db, "pharmacyRequests"), where("pharmacyUid", "==", pharmacyUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), onData, onError, "listenToPharmacyRequests");
 }
 
 export function listenToPatientPharmacyRequests(patientUid, onData, onError) {
-  const q = query(collection(db, "pharmacyRequests"), where("patientUid", "==", patientUid), orderBy("createdAt", "desc"));
-  return onSnapshot(q, (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+  const q = query(collection(db, "pharmacyRequests"), where("patientUid", "==", patientUid));
+  return listenAndSort(q, (a, b) => toMs(b.createdAt) - toMs(a.createdAt), onData, onError, "listenToPatientPharmacyRequests");
 }
 
 export async function updatePharmacyRequest(requestId, updates) {
